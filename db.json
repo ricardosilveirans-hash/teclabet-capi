@@ -1,0 +1,16 @@
+{
+  "sessions": {
+    "68d896c65b99d9fb74cfa909": {
+      "user_id": "68d896832fd4554ab1d358f2",
+      "email": "mariadejesusgaldino2@gmail.com",
+      "phone": "88994584542",
+      "value": 10,
+      "updated_at": 1759024840434
+    }
+  },
+  "users": {
+    "68d896832fd4554ab1d358f2": {
+      "paid_count": 1
+    }
+  }
+}
