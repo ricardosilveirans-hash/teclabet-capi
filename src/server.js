@@ -7,6 +7,30 @@ import fetch from 'node-fetch';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+// ==== Logs de requisições (simples, sem dependências) ====
+const LOG_BODY = process.env.LOG_BODY === 'true'; // opcional: ativa log do body via var de ambiente
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  const ip =
+    req.headers['x-forwarded-for'] ||
+    req.socket?.remoteAddress ||
+    '';
+
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    // Log do corpo só para métodos que costumam ter payload
+    const canLogBody = LOG_BODY && ['POST', 'PUT', 'PATCH'].includes(req.method);
+    const bodySnippet = canLogBody ? ` body=${JSON.stringify(req.body).slice(0, 1000)}` : '';
+
+    console.log(
+      `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ` +
+      `${res.statusCode} ${ms}ms ip=${ip}${bodySnippet}`
+    );
+  });
+
+  next();
+});
 
 const PORT = process.env.PORT || 3000;
 const PIXEL_ID = process.env.META_PIXEL_ID;
