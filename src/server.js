@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
+import ga4Router from './routes/ga4.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -30,6 +31,13 @@ app.use((req, res, next) => {
   });
 
   next();
+});
+// === Rotas ===
+app.use('/ga4', ga4Router);   // -> isto habilita POST https://.../ga4/mp
+app.get('/health', (req, res) => res.json({ ok: true }));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`TeclaBet CAPI server running on port ${PORT}`);
 });
 
 const PORT = process.env.PORT || 3000;
