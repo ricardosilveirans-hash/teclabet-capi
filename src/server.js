@@ -8,9 +8,9 @@ import ga4Router from './routes/ga4.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+
 // ==== Logs de requisições (simples, sem dependências) ====
 const LOG_BODY = process.env.LOG_BODY === 'true'; // opcional: ativa log do body via var de ambiente
-
 app.use((req, res, next) => {
   const start = Date.now();
   const ip =
@@ -20,10 +20,8 @@ app.use((req, res, next) => {
 
   res.on('finish', () => {
     const ms = Date.now() - start;
-    // Log do corpo só para métodos que costumam ter payload
     const canLogBody = LOG_BODY && ['POST', 'PUT', 'PATCH'].includes(req.method);
     const bodySnippet = canLogBody ? ` body=${JSON.stringify(req.body).slice(0, 1000)}` : '';
-
     console.log(
       `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ` +
       `${res.statusCode} ${ms}ms ip=${ip}${bodySnippet}`
@@ -32,15 +30,12 @@ app.use((req, res, next) => {
 
   next();
 });
-// === Rotas ===
-app.use('/ga4', ga4Router);   // -> isto habilita POST https://.../ga4/mp
-app.get('/health', (req, res) => res.json({ ok: true }));
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`TeclaBet CAPI server running on port ${PORT}`);
-});
 
+// === Rotas básicas ===
+app.get('/health', (req, res) => res.json({ ok: true })); // única rota /health
+app.use('/ga4', ga4Router); // habilita POST https://.../ga4/mp
 
+// === Config Meta CAPI ===
 const PIXEL_ID = process.env.META_PIXEL_ID;
 const ACCESS_TOKEN = process.env.META_CAPI_TOKEN;
 const GRAPH_VERSION = process.env.GRAPH_VERSION || 'v21.0';
@@ -48,11 +43,13 @@ const WEBHOOK_USER = process.env.WEBHOOK_BASIC_USER;
 const WEBHOOK_PASS = process.env.WEBHOOK_BASIC_PASS;
 const TEST_EVENT_CODE = process.env.TEST_EVENT_CODE || '';
 
+// === "Banco" simples em arquivo ===
 const DB_FILE = path.join(process.cwd(), 'db.json');
 function loadDB(){ try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { return { sessions:{}, users:{} }; } }
 function saveDB(db){ fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
 const db = loadDB();
 
+// === Utilidades ===
 function sha256(s){ if(!s) return null; return crypto.createHash('sha256').update(String(s).trim().toLowerCase()).digest('hex'); }
 
 function basicAuth(req, res, next){
@@ -88,22 +85,34 @@ async function sendCapiEvent({ event_name, event_time, event_id, event_source_ur
   if (TEST_EVENT_CODE) body['test_event_code'] = TEST_EVENT_CODE;
 
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PIXEL_ID}/events?access_token=${ACCESS_TOKEN}`;
-  const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const res = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
   const json = await res.json();
   if (!res.ok || json.error) { throw new Error(`Meta CAPI error: ${res.status} ${JSON.stringify(json)}`); }
   return json;
 }
 
-// mini “banco” local
-function upsertSession(order_id, data){ db.sessions[order_id] = { ...(db.sessions[order_id]||{}), ...data, updated_at: Date.now() }; saveDB(db); return db.sessions[order_id]; }
+// helpers de sessão
+function upsertSession(order_id, data){
+  db.sessions[order_id] = { ...(db.sessions[order_id]||{}), ...data, updated_at: Date.now() };
+  saveDB(db);
+  return db.sessions[order_id];
+}
 function getSession(order_id){ return db.sessions[order_id]; }
-function markPaid(user_id){ if (!db.users[user_id]) db.users[user_id] = { paid_count: 0 }; db.users[user_id].paid_count += 1; saveDB(db); }
-function isFTD(user_id){ const c = db.users[user_id]?.paid_count || 0; return c === 0; }
+function markPaid(user_id){
+  if (!db.users[user_id]) db.users[user_id] = { paid_count: 0 };
+  db.users[user_id].paid_count += 1;
+  saveDB(db);
+}
+function isFTD(user_id){
+  const c = db.users[user_id]?.paid_count || 0;
+  return c === 0;
+}
 
-// saúde
-app.get('/health', (req,res) => res.json({ ok: true }));
-
-// endpoint para anexar fbp/fbc do front se desejar
+// endpoint opcional para anexar fbp/fbc do front
 app.post('/meta/attach', express.json(), (req,res) => {
   const { order_id, user_id, email, phone, fbp, fbc, event_source_url, user_agent } = req.body || {};
   if (!order_id) return res.status(400).json({ error: 'order_id required' });
@@ -113,8 +122,7 @@ app.post('/meta/attach', express.json(), (req,res) => {
 
 // === WEBHOOK: USUÁRIO CRIADO (Cadastro) ===
 app.all(['/webhooks/user_created', '/webhooks/user_created/'], basicAuth, async (req,res) => {
-  // plataformas fazem GET/HEAD de verificação — responda 200
-  if (req.method !== 'POST') return res.status(200).send('OK');
+  if (req.method !== 'POST') return res.status(200).send('OK'); // verificação de GET/HEAD
   try{
     const p = req.body || {};
     const user_id = String(p.user_id || p.id || '');
@@ -170,7 +178,13 @@ app.all(['/webhooks/deposit_paid', '/webhooks/deposit_paid/'], basicAuth, async 
       event_source_url: s.event_source_url || undefined,
       user: { external_id: user_id, email: s.email || p.user_email, phone: s.phone || p.user_phone },
       client: { fbp: s.fbp, fbc: s.fbc, ua: s.ua },
-      custom: { currency:'BRL', value: Number.isFinite(amount)? amount: undefined, order_id, content_name:'Pix Deposit', content_category: ftd ? 'FTD' : 'Repeat' }
+      custom: {
+        currency:'BRL',
+        value: Number.isFinite(amount)? amount: undefined,
+        order_id,
+        content_name:'Pix Deposit',
+        content_category: ftd ? 'FTD' : 'Repeat'
+      }
     });
 
     markPaid(user_id);
@@ -178,7 +192,14 @@ app.all(['/webhooks/deposit_paid', '/webhooks/deposit_paid/'], basicAuth, async 
   }catch(e){ console.error(e); res.status(500).json({ error: String(e) }); }
 });
 
-// erro genérico
-app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: String(err) }); });
+// === Tratador de erro genérico ===
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: String(err) });
+});
 
-app.listen(PORT, () => console.log(`TeclaBet CAPI server running on port ${PORT}`));
+// === Subida do servidor (uma única vez) ===
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`TeclaBet CAPI server running on port ${PORT}`);
+});
