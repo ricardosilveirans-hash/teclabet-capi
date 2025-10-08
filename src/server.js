@@ -40,7 +40,7 @@ app.listen(PORT, () => {
   console.log(`TeclaBet CAPI server running on port ${PORT}`);
 });
 
-const PORT = process.env.PORT || 3000;
+
 const PIXEL_ID = process.env.META_PIXEL_ID;
 const ACCESS_TOKEN = process.env.META_CAPI_TOKEN;
 const GRAPH_VERSION = process.env.GRAPH_VERSION || 'v21.0';
